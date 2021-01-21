@@ -368,6 +368,7 @@ class net(nn.Module):
         # build Anchors, FPN, Classifier / Bbox-Regressor -head
         self.np_anchors = mutils.generate_pyramid_anchors(self.logger, self.cf)
         self.anchors = torch.from_numpy(self.np_anchors).float().cuda()
+
         self.Fpn = backbone.FPN(self.cf, conv, operate_stride1=self.cf.operate_stride1)
         self.Classifier = Classifier(self.cf, conv)
         self.BBRegressor = BBRegressor(self.cf, conv)

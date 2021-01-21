@@ -18,6 +18,143 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 
+class BasicBlock(nn.Module):
+    expansion = 1
+
+    def __init__(self, in_planes, planes, stride=1):
+        super(BasicBlock, self).__init__()
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(planes)
+
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != self.expansion*planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_planes, self.expansion*planes, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(self.expansion*planes)
+            )
+
+    def forward(self, x):
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        out = F.relu(out)
+        return out
+
+class UNet_rb(nn.Module):
+    def __init__(self, num_classes, input_channels, cf, conv, operate_stride1=False):
+        super().__init__()
+
+        nb_filter = [16, 32, 64, 128, 256, 512]
+        self.pool = nn.MaxPool2d(2, 2)
+        self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+
+        self.conv0_0 = BasicBlock(input_channels, nb_filter[0])
+        self.conv1_0 = BasicBlock(nb_filter[0], nb_filter[1])
+        self.conv2_0 = BasicBlock(nb_filter[1], nb_filter[2])
+        self.conv3_0 = BasicBlock(nb_filter[2], nb_filter[3])
+        self.conv4_0 = BasicBlock(nb_filter[3], nb_filter[4])
+        self.conv5_0 = BasicBlock(nb_filter[4], nb_filter[5])
+
+        self.conv4_1 = BasicBlock(nb_filter[4] + nb_filter[5], nb_filter[4])
+        self.conv3_1 = BasicBlock(nb_filter[3] + nb_filter[4], nb_filter[3])
+        self.conv2_2 = BasicBlock(nb_filter[2] + nb_filter[3], nb_filter[2])
+        self.conv1_3 = BasicBlock(nb_filter[1] + nb_filter[2], nb_filter[1])
+        self.conv0_4 = BasicBlock(nb_filter[0] + nb_filter[1], nb_filter[0])
+
+
+        self.start_filts = cf.start_filts
+        start_filts = self.start_filts
+        self.n_blocks = [3, 4, {"resnet50": 6, "resnet101": 23}[cf.res_architecture], 3]
+        self.block = ResBlock
+        self.block_expansion = 4
+        self.operate_stride1 = operate_stride1
+        self.sixth_pooling = cf.sixth_pooling
+        self.dim = conv.dim
+
+        if conv.dim == 2:
+            self.P1_upsample = Interpolate(scale_factor=2, mode='bilinear')
+            self.P2_upsample = Interpolate(scale_factor=2, mode='bilinear')
+        else:
+            self.P1_upsample = Interpolate(scale_factor=(2, 2, 1), mode='trilinear')
+            self.P2_upsample = Interpolate(scale_factor=(2, 2, 1), mode='trilinear')
+
+        self.out_channels = cf.end_filts
+        self.P5_conv1 = conv(nb_filter[5] + cf.n_latent_dims, self.out_channels, ks=1, stride=1, relu=None) #
+        self.P4_conv1 = conv(nb_filter[4], self.out_channels, ks=1, stride=1, relu=None)
+        self.P3_conv1 = conv(nb_filter[3], self.out_channels, ks=1, stride=1, relu=None)
+        self.P2_conv1 = conv(nb_filter[2], self.out_channels, ks=1, stride=1, relu=None)
+        self.P1_conv1 = conv(nb_filter[1], self.out_channels, ks=1, stride=1, relu=None)
+
+        if operate_stride1:
+            self.P0_conv1 = conv(start_filts, self.out_channels, ks=1, stride=1, relu=None)
+            self.P0_conv2 = conv(self.out_channels, self.out_channels, ks=3, stride=1, pad=1, relu=None)
+
+        self.P1_conv2 = conv(self.out_channels, self.out_channels, ks=3, stride=1, pad=1, relu=None)
+        self.P2_conv2 = conv(self.out_channels, self.out_channels, ks=3, stride=1, pad=1, relu=None)
+        self.P3_conv2 = conv(self.out_channels, self.out_channels, ks=3, stride=1, pad=1, relu=None)
+        self.P4_conv2 = conv(self.out_channels, self.out_channels, ks=3, stride=1, pad=1, relu=None)
+        self.P5_conv2 = conv(self.out_channels, self.out_channels, ks=3, stride=1, pad=1, relu=None)
+
+        if self.sixth_pooling:
+            self.P6_conv1 = conv(start_filts * 64, self.out_channels, ks=1, stride=1, relu=None)
+            self.P6_conv2 = conv(self.out_channels, self.out_channels, ks=3, stride=1, pad=1, relu=None)
+
+        self.final = nn.Conv2d(nb_filter[0], num_classes, kernel_size=1)
+
+
+    def forward(self, input):
+        x0_0 = self.conv0_0(input)
+        x1_0 = self.conv1_0(self.pool(x0_0))
+        x2_0 = self.conv2_0(self.pool(x1_0))
+        x3_0 = self.conv3_0(self.pool(x2_0))
+        x4_0 = self.conv4_0(self.pool(x3_0))
+        x5_0 = self.conv5_0(self.pool(x4_0))
+
+        x4_1 = self.conv4_1(torch.cat([x4_0, self.up(x5_0)], 1))
+        x3_1 = self.conv3_1(torch.cat([x3_0, self.up(x4_1)], 1))
+        x2_1 = self.conv2_2(torch.cat([x2_0, self.up(x3_1)], 1))
+        x1_1 = self.conv1_3(torch.cat([x1_0, self.up(x2_1)], 1))
+        x0_1 = self.conv0_4(torch.cat([x0_0, self.up(x1_1)], 1))
+
+
+        #p4_pre_out = self.P4_conv1(c4_out) + F.interpolate(p5_pre_out, scale_factor=2)
+        #p3_pre_out = self.P3_conv1(c3_out) + F.interpolate(p4_pre_out, scale_factor=2)
+        #p2_pre_out = self.P2_conv1(c2_out) + F.interpolate(p3_pre_out, scale_factor=2)
+        p1_pre_out = x0_1
+        c2_out = x2_1
+        c3_out = x3_1
+        c4_out = x4_1
+        p5_pre_out = self.P5_conv1(x5_0)
+        p4_pre_out = self.P4_conv1(c4_out)  + F.interpolate(p5_pre_out, scale_factor=2)
+        p3_pre_out = self.P3_conv1(c3_out) + F.interpolate(p4_pre_out, scale_factor=2)
+        p2_pre_out = self.P2_conv1(c2_out) + F.interpolate(p3_pre_out, scale_factor=2)
+
+        p2_out = self.P2_conv2(p2_pre_out)
+        p3_out = self.P3_conv2(p3_pre_out)
+        p4_out = self.P4_conv2(p4_pre_out)
+        p5_out = self.P5_conv2(p5_pre_out)
+        out_list = [p2_out, p3_out, p4_out, p5_out]
+        '''
+        if self.sixth_pooling:
+            p6_out = self.P6_conv2(p6_pre_out)
+            out_list.append(p6_out)
+
+        if self.operate_stride1:
+            p1_pre_out = self.P1_conv1(c1_out) + self.P2_upsample(p2_pre_out)
+            p0_pre_out = self.P0_conv1(c0_out) + self.P1_upsample(p1_pre_out)
+            # p1_out = self.P1_conv2(p1_pre_out) # usually not needed.
+            p0_out = self.P0_conv2(p0_pre_out)
+            out_list = [p0_out] + out_list
+
+        '''
+        output = self.final(x0_1)
+        out_list = [output] + out_list
+        return out_list
+
+
 
 class FPN(nn.Module):
     """

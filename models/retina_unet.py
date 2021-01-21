@@ -368,7 +368,9 @@ class net(nn.Module):
         # build Anchors, FPN, Classifier / Bbox-Regressor -head
         self.np_anchors = mutils.generate_pyramid_anchors(self.logger, self.cf)
         self.anchors = torch.from_numpy(self.np_anchors).float().cuda()
+
         self.Fpn = backbone.FPN(self.cf, conv, operate_stride1=self.cf.operate_stride1)
+        self.Unet = backbone.UNet_rb(2, 1, self.cf, conv, operate_stride1=self.cf.operate_stride1)
         self.Classifier = Classifier(self.cf, conv)
         self.BBRegressor = BBRegressor(self.cf, conv)
         self.final_conv = conv(self.cf.end_filts, self.cf.num_seg_classes, ks=1, pad=0, norm=None, relu=None)
@@ -485,8 +487,12 @@ class net(nn.Module):
         :return: detection_masks: (n_final_detections, n_classes, y, x, (z)) raw molded masks as returned by mask-head.
         """
         # Feature extraction
-        fpn_outs = self.Fpn(img)
-        seg_logits = self.final_conv(fpn_outs[0])
+
+        #fpn_outs = self.Fpn(img)
+        #seg_logits = self.final_conv(fpn_outs[0])
+        fpn_outs = self.Unet(img)
+        seg_logits = fpn_outs[0]
+
         selected_fmaps = [fpn_outs[i + 1] for i in self.cf.pyramid_levels]
 
         # Loop through pyramid layers

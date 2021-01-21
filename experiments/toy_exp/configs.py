@@ -28,7 +28,7 @@ class configs(DefaultConfigs):
         #    Preprocessing      #
         #########################
 
-        self.root_dir = '/home/gregor/datasets/toy_mdt'
+        self.root_dir = './datasets'
 
         #########################
         #         I/O           #
@@ -50,7 +50,7 @@ class configs(DefaultConfigs):
 
         # choose one of the 3 toy experiments described in https://arxiv.org/pdf/1811.08661.pdf
         # one of ['donuts_shape', 'donuts_pattern', 'circles_scale'].
-        toy_mode = 'donuts_shape_noise'
+        toy_mode = 'donuts_shape'
 
         # path to preprocessed data.
         self.input_df_name = 'info_df.pickle'
@@ -119,7 +119,7 @@ class configs(DefaultConfigs):
 
         self.num_epochs = 28
         self.num_train_batches = 100 if self.dim == 2 else 200
-        self.batch_size = 16 if self.dim == 2 else 8
+        self.batch_size = 8 if self.dim == 2 else 8
 
         self.do_validation = True
         # decide whether to validate on entire patient volumes (like testing) or sampled patches (like training)
